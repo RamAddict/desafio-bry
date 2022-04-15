@@ -7,4 +7,4 @@ services:
     working_dir: '/tmp'
     command: 'mvn spring-boot:run'
     ports:
-      -8080:8080
+      - "8080:8080"
