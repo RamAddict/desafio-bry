@@ -1,7 +1,7 @@
 package br.com.bry.bianco.desafio;
 
-import java.io.FileInputStream;
 import java.io.IOException;
+import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
 import java.security.KeyStore;
@@ -15,6 +15,7 @@ import java.security.UnrecoverableKeyException;
 import java.security.cert.CertificateEncodingException;
 import java.security.cert.CertificateException;
 import java.security.cert.X509Certificate;
+import java.util.Base64;
 
 import org.apache.commons.io.FileUtils;
 import org.apache.commons.io.FilenameUtils;
@@ -24,7 +25,6 @@ import org.bouncycastle.cms.CMSException;
 import org.bouncycastle.cms.CMSProcessableByteArray;
 import org.bouncycastle.cms.CMSSignedDataGenerator;
 import org.bouncycastle.cms.CMSSignedDataParser;
-import org.bouncycastle.cms.CMSVerifierCertificateNotValidException;
 import org.bouncycastle.cms.jcajce.JcaSignerInfoGeneratorBuilder;
 import org.bouncycastle.cms.jcajce.JcaSimpleSignerInfoVerifierBuilder;
 import org.bouncycastle.jce.provider.BouncyCastleProvider;
@@ -34,47 +34,52 @@ import org.bouncycastle.operator.jcajce.JcaDigestCalculatorProviderBuilder;
 import org.bouncycastle.util.encoders.Hex;
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
-// import org.springframework.web.bind.annotation.GetMapping;
-// import org.springframework.web.bind.annotation.RestController;
+
 
 import lombok.extern.log4j.Log4j2;
 
 @Log4j2
 @SpringBootApplication
-// @RestController
 public class DesafioApplication {
 
-	public static void main(String[] args) {
+	public static void main(String[] args) throws IOException {
 		SpringApplication.run(DesafioApplication.class, args);
 		log.info("begin");
 
-		final var doc = "arquivos/doc.txt";
-		// Add new provider "BC"
-		addBouncyCastleAsProvider();
+		final var docToHash = "arquivos/doc.txt";
+		try (
+				final var docStream = DesafioApplication.class.getClassLoader().getResourceAsStream(docToHash);
+				final var signatures = DesafioApplication.class.getClassLoader()
+						.getResourceAsStream("pkcs12/Desafio Estagio Java.p12")) {
 
-		try {
-			// calculate hash of doc.txt
-			hashDoc(doc);
-			// sign doc with the given certificate
-			signDoc(doc);
-			// verify signature
-			verifyDoc("output/desafioSigned.p7s");
-		} catch (UnrecoverableKeyException | KeyStoreException | NoSuchAlgorithmException | CertificateException
-				| OperatorCreationException | IOException | CMSException | NoSuchProviderException e) {
-			e.printStackTrace();
+			final var password = "123456789".toCharArray();
+			// Add new provider "BC"
+			addBouncyCastleAsProvider();
+
+			try {
+				// calculate hash of doc.txt
+				hashDoc(docToHash);
+				// sign doc with the given certificate
+				signDoc(docStream, signatures, password, true);
+				// verify signature
+				try (final var signedDoc = FileUtils.openInputStream(FileUtils.getFile("output/desafioSigned.p7s"))) {
+					verifyDoc(signedDoc);
+				}
+
+			} catch (UnrecoverableKeyException | KeyStoreException | NoSuchAlgorithmException | CertificateException
+					| OperatorCreationException | IOException | CMSException | NoSuchProviderException e) {
+				e.printStackTrace();
+			}
 		}
 	}
 
-	// @GetMapping
-	// public String hello() {
-	// return "henlo";
-	// }
 
-	private static void verifyDoc(String doc) throws OperatorCreationException, CMSException, IOException {
+
+	public static boolean verifyDoc(InputStream doc) throws OperatorCreationException, CMSException, IOException {
 		// parse file
 		final var signedParser = new CMSSignedDataParser(
-				new JcaDigestCalculatorProviderBuilder().setProvider("BC").build(), FileUtils.openInputStream(FileUtils.getFile(doc)));
-		
+				new JcaDigestCalculatorProviderBuilder().setProvider("BC").build(), doc);
+
 		// consume input stream, to allow for hash calculation
 		signedParser.getSignedContent().drain();
 		// get signers
@@ -88,7 +93,8 @@ public class DesafioApplication {
 			if (possibleCertificate.isPresent()) {
 				final var certificate = (X509CertificateHolder) possibleCertificate.get();
 				try {
-					final var jcaSignerVerifier = new JcaSimpleSignerInfoVerifierBuilder().setProvider("BC").build(certificate);
+					final var jcaSignerVerifier = new JcaSimpleSignerInfoVerifierBuilder().setProvider("BC")
+							.build(certificate);
 					return signer.verify(jcaSignerVerifier);
 				} catch (OperatorCreationException | CertificateException | CMSException e) {
 					return false;
@@ -97,36 +103,34 @@ public class DesafioApplication {
 				return false;
 			}
 		});
-		log.info(isValid);
+		return isValid;
 	}
 
-	private static void addBouncyCastleAsProvider() {
+	public static void addBouncyCastleAsProvider() {
 		var bcProvider = new BouncyCastleProvider();
 		Security.addProvider(bcProvider);
 	}
 
-	private static void signDoc(String file) throws KeyStoreException, NoSuchAlgorithmException, CertificateException,
+	public static String signDoc(InputStream toSign, InputStream signers, char[] password, boolean saveFile)
+			throws KeyStoreException, NoSuchAlgorithmException, CertificateException,
 			IOException, UnrecoverableKeyException, OperatorCreationException, CertificateEncodingException,
 			CMSException {
 		// get appropriate KeyStore instance
 		final var ks = KeyStore.getInstance("PKCS12");
 
-		// get the certificate
-		final var password = "123456789".toCharArray();
-		try (final var inputStream = DesafioApplication.class.getClassLoader()
-				.getResourceAsStream("pkcs12/Desafio Estagio Java.p12")) {
-			// add digital signature to keystore
-			ks.load(inputStream, password);
-		}
+		// add digital signature to keystore
+		ks.load(signers, password);
+
 		// extract private key
+		// TODO: This method will only look for and sign with the given alias, fix this
+		// by using the known aliases ks.aliases()
 		final var privKey = (PrivateKey) ks.getKey("f22c0321-1a9a-4877-9295-73092bb9aa94", password);
 		final var certificate = ks.getCertificate("f22c0321-1a9a-4877-9295-73092bb9aa94");
 
 		CMSProcessableByteArray cmsData;
+
 		// read file to sign
-		try (final var inputStream = DesafioApplication.class.getClassLoader().getResourceAsStream(file)) {
-			cmsData = new CMSProcessableByteArray(IOUtils.toByteArray(inputStream));
-		}
+		cmsData = new CMSProcessableByteArray(IOUtils.toByteArray(toSign));
 
 		// generate digital signature
 		final var gen = new CMSSignedDataGenerator();
@@ -141,13 +145,15 @@ public class DesafioApplication {
 		final var signedMessage = gen.generate(cmsData, true).getEncoded();
 
 		// save as .p7s
-		try (final var outputStream = FileUtils.openOutputStream(FileUtils.getFile("output/desafioSigned.p7s"))) {
-			IOUtils.write(signedMessage, outputStream);
-		}
+		if (saveFile)
+			try (final var outputStream = FileUtils.openOutputStream(FileUtils.getFile("output/desafioSigned.p7s"))) {
+				IOUtils.write(signedMessage, outputStream);
+			}
 
+		return Base64.getEncoder().encodeToString(signedMessage);
 	}
 
-	private static void hashDoc(final String docToHash)
+	public static void hashDoc(final String docToHash)
 			throws NoSuchAlgorithmException, NoSuchProviderException, IOException {
 		// make sure the provider is BC as per requirement, it would pick SUN otherwise
 		final var digest = MessageDigest.getInstance("SHA-256", "BC");
