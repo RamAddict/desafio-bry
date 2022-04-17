@@ -2,13 +2,30 @@ package br.com.bry.bianco.desafio;
 
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Path;
+import java.security.KeyStore;
+import java.security.KeyStoreException;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.security.NoSuchProviderException;
+import java.security.PrivateKey;
 import java.security.Security;
+import java.security.UnrecoverableKeyException;
+import java.security.cert.CertificateEncodingException;
+import java.security.cert.CertificateException;
+import java.security.cert.X509Certificate;
 
 import org.apache.commons.io.FileUtils;
+import org.apache.commons.io.FilenameUtils;
+import org.apache.commons.io.IOUtils;
+import org.bouncycastle.cms.CMSException;
+import org.bouncycastle.cms.CMSProcessableByteArray;
+import org.bouncycastle.cms.CMSSignedDataGenerator;
+import org.bouncycastle.cms.jcajce.JcaSignerInfoGeneratorBuilder;
 import org.bouncycastle.jce.provider.BouncyCastleProvider;
+import org.bouncycastle.operator.OperatorCreationException;
+import org.bouncycastle.operator.jcajce.JcaContentSignerBuilder;
+import org.bouncycastle.operator.jcajce.JcaDigestCalculatorProviderBuilder;
 import org.bouncycastle.util.encoders.Hex;
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
@@ -26,54 +43,95 @@ public class DesafioApplication {
 		SpringApplication.run(DesafioApplication.class, args);
 		log.info("begin");
 
-		// source file
-		final var docToHash = "src/main/resources/doc.txt";
-		// get hash of file
-		final var hashAsEncodedString = new String(Hex.encode(getSha256Hash(docToHash)));
-		// write to file
+		final var doc = "arquivos/doc.txt";
+		// Add new provider "BC"
+		addBouncyCastleAsProvider();
+
 		try {
-			FileUtils.write(FileUtils.getFile(docToHash.replace("doc.txt", "doc_hash.txt")), hashAsEncodedString, StandardCharsets.UTF_8);
-		} catch (IOException e) {
+			// calculate hash of doc.txt
+			hashDocument(doc);
+			// sign doc with the given certificate
+			signDoc(doc);
+		} catch (UnrecoverableKeyException | KeyStoreException | NoSuchAlgorithmException | CertificateException
+				| OperatorCreationException | IOException | CMSException | NoSuchProviderException e) {
 			e.printStackTrace();
 		}
-
 	}
 
 	// @GetMapping
 	// public String hello() {
-	// 	return "henlo";
+	// return "henlo";
 	// }
 
-	private static byte[] getSha256Hash(String path) {
-
-		// add new provider
+	private static void addBouncyCastleAsProvider() {
 		var bcProvider = new BouncyCastleProvider();
 		Security.addProvider(bcProvider);
-		
-		MessageDigest digest = null;
-		try {
-			// make sure the provider is BC as per requirement, it would pick SUN otherwise
-			digest = MessageDigest.getInstance("SHA-256", bcProvider.getName());
-			
-			// System.out.println(sha256.getProvider());
-			// var sha256SUN = MessageDigest.getInstance("SHA-256"); 
-			// System.out.println(sha256SUN.getProvider());
-		} catch (NoSuchAlgorithmException e) {
-			e.printStackTrace();
-		} catch (NoSuchProviderException  e) {
-			e.printStackTrace();
-		}
-		
-		// read file
-		final var file = FileUtils.getFile(path);
+	}
 
-		try {
-			final var bytes = FileUtils.readFileToByteArray(file);
-			return digest.digest(bytes);
-		} catch (IOException e) {
-			e.printStackTrace();
+	private static void signDoc(String file) throws KeyStoreException, NoSuchAlgorithmException, CertificateException,
+			IOException, UnrecoverableKeyException, OperatorCreationException, CertificateEncodingException,
+			CMSException {
+		// get appropriate KeyStore instance
+		final var ks = KeyStore.getInstance("PKCS12");
+
+		// get the certificate
+		final var password = "123456789".toCharArray();
+		try (final var inputStream = DesafioApplication.class.getClassLoader()
+				.getResourceAsStream("pkcs12/Desafio Estagio Java.p12")) {
+			// add digital signature to keystore
+			ks.load(inputStream, password);
 		}
-		return null;
+		// extract private key
+		final var privKey = (PrivateKey) ks.getKey("f22c0321-1a9a-4877-9295-73092bb9aa94", password);
+
+		CMSProcessableByteArray cmsData;
+		// read file to sign
+		try (final var inputStream = DesafioApplication.class.getClassLoader().getResourceAsStream(file)) {
+			cmsData = new CMSProcessableByteArray(IOUtils.toByteArray(inputStream));
+		}
+
+		// generate digital signature
+		final var gen = new CMSSignedDataGenerator();
+
+		final var sha256Signer = new JcaContentSignerBuilder("SHA256WithRSAEncryption").setProvider("BC")
+				.build(privKey);
+		gen.addSignerInfoGenerator(new JcaSignerInfoGeneratorBuilder(
+				new JcaDigestCalculatorProviderBuilder().setProvider("BC").build())
+				.build(sha256Signer, (X509Certificate) ks.getCertificate("f22c0321-1a9a-4877-9295-73092bb9aa94")));
+
+		// sign doc
+		final var signedMessage = gen.generate(cmsData, true).getEncoded();
+
+		// save as .p7s
+		try (final var outputStream = FileUtils.openOutputStream(FileUtils.getFile("output/DesafioSigned.p7s"))) {
+			IOUtils.write(signedMessage, outputStream);
+		}
+
+	}
+
+	private static void hashDocument(final String docToHash)
+			throws NoSuchAlgorithmException, NoSuchProviderException, IOException {
+		// make sure the provider is BC as per requirement, it would pick SUN otherwise
+		final var digest = MessageDigest.getInstance("SHA-256", "BC");
+
+		// read file
+		try (final var file = DesafioApplication.class.getClassLoader().getResourceAsStream(docToHash)) {
+			final var bytes = IOUtils.toByteArray(file);
+
+			// perform hash
+			final var hash = digest.digest(bytes);
+
+			// get hexadecimal encoding
+			final var hashAsEncodedString = new String(Hex.encode(hash));
+
+			// write to file
+			FileUtils.write(
+					FileUtils.getFile("output",
+							FilenameUtils.removeExtension(Path.of(docToHash).getFileName().toString())
+									.concat("_hashed.txt")),
+					hashAsEncodedString,
+					StandardCharsets.UTF_8);
+		}
 	}
 
 }
