@@ -8,3 +8,9 @@ services:
     command: 'mvn spring-boot:run'
     ports:
       - "8080:8080"
+  testAPI:
+    image: maven:3.8-openjdk-17
+    volumes:
+      - '.:/tmp'
+    working_dir: '/tmp'
+    command: 'mvn test'

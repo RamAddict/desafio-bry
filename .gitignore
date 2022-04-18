@@ -33,5 +33,7 @@ build/
 .vscode/
 
 Dockerfile
+hsperfdata_root
+jansi-2*
 
 output/test*

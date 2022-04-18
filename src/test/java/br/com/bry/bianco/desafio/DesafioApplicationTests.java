@@ -19,16 +19,17 @@ import java.security.cert.CertificateException;
 import org.apache.commons.io.FileUtils;
 import org.bouncycastle.cms.CMSException;
 import org.bouncycastle.operator.OperatorCreationException;
-import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.BeforeAll;
+import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.test.context.SpringBootTest;
 
 @SpringBootTest
 class DesafioApplicationTests {
 
-	@BeforeEach
+	@BeforeAll
 	@Test
-	void testBouncyCastleAddedAsProvider() {
+	static void testBouncyCastleAddedAsProvider() {
 		// Fixture Setup
 		// Exercise SUT
 		assertDoesNotThrow(() -> {
@@ -58,52 +59,53 @@ class DesafioApplicationTests {
 	}
 
 	@Test
-	void testVerifySignatureExpiredDocument()
-			throws UnrecoverableKeyException, CertificateEncodingException, KeyStoreException,
-			NoSuchAlgorithmException, CertificateException, OperatorCreationException, IOException, CMSException {
-		// Fixture Setup
-
-		final var signed = FileUtils.openInputStream(FileUtils.getFile("output/desafioSigned.p7s"));
-		// Exercise SUT
-		final var signature = DesafioApplication.verifyDoc(signed);
-		// Result Verification
-		assertFalse(signature);
-		// Fixture Teardown
-		signed.close();
-	}
-
-	@Test
 	void testSignDocument() throws UnrecoverableKeyException, CertificateEncodingException, KeyStoreException,
-			NoSuchAlgorithmException, CertificateException, OperatorCreationException, IOException, CMSException {
+	NoSuchAlgorithmException, CertificateException, OperatorCreationException, IOException, CMSException {
 		// Fixture Setup
-
+		
 		final var toSign = this.getClass().getClassLoader().getResourceAsStream("arquivos/test.txt");
 		final var signers = this.getClass().getClassLoader().getResourceAsStream("pkcs12/test_pkcs.p12");
 		final var password = "12345".toCharArray();
 		final var outputFileName = "testSignedWithTestCertificate_test";
-
+		
 		// Exercise SUT
 		// Result Verification
 		assertDoesNotThrow(() -> DesafioApplication.signDoc(toSign, signers, password, outputFileName, "test_alias"));
-
+		
 		// Fixture Teardown
-		FileUtils.delete(FileUtils.getFile("output/" + outputFileName + ".p7s"));
 	}
-
-	@Test
-	void testVerifySignatureNonExpiredDocument()
-			throws UnrecoverableKeyException, CertificateEncodingException, KeyStoreException,
-			NoSuchAlgorithmException, CertificateException, OperatorCreationException, IOException, CMSException {
-		// Fixture Setup
-
-		final var signed = FileUtils
-				.openInputStream(FileUtils.getFile("output/testSignedWithTestCertificate_test.p7s"));
-		// Exercise SUT
-		final var signature = DesafioApplication.verifyDoc(signed);
-		// Result Verification
-		assertTrue(signature);
-		// Fixture Teardown
-		signed.close();
+	@Nested
+	class TestSignatureVerification {
+		@Test
+		void testVerifySignatureExpiredDocument()
+		throws UnrecoverableKeyException, CertificateEncodingException, KeyStoreException,
+		NoSuchAlgorithmException, CertificateException, OperatorCreationException, IOException, CMSException {
+			// Fixture Setup
+			
+			final var signed = FileUtils.openInputStream(FileUtils.getFile("output/desafioSigned.p7s"));
+			// Exercise SUT
+			final var signature = DesafioApplication.verifyDoc(signed);
+			// Result Verification
+			assertFalse(signature);
+			// Fixture Teardown
+			signed.close();
+		}
+		
+		@Test
+		void testVerifySignatureNonExpiredDocument()
+		throws UnrecoverableKeyException, CertificateEncodingException, KeyStoreException,
+		NoSuchAlgorithmException, CertificateException, OperatorCreationException, IOException, CMSException {
+			// Fixture Setup
+			
+			final var signed = FileUtils
+			.openInputStream(FileUtils.getFile("output/testSignedWithTestCertificate_test.p7s"));
+			// Exercise SUT
+			final var signature = DesafioApplication.verifyDoc(signed);
+			// Result Verification
+			assertTrue(signature);
+			// Fixture Teardown
+			signed.close();
+		}
 	}
-
+		
 }
