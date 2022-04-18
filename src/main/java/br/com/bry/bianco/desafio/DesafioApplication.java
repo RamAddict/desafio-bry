@@ -25,6 +25,7 @@ import org.bouncycastle.cms.CMSException;
 import org.bouncycastle.cms.CMSProcessableByteArray;
 import org.bouncycastle.cms.CMSSignedDataGenerator;
 import org.bouncycastle.cms.CMSSignedDataParser;
+import org.bouncycastle.cms.CMSVerifierCertificateNotValidException;
 import org.bouncycastle.cms.jcajce.JcaSignerInfoGeneratorBuilder;
 import org.bouncycastle.cms.jcajce.JcaSimpleSignerInfoVerifierBuilder;
 import org.bouncycastle.jce.provider.BouncyCastleProvider;
@@ -34,7 +35,6 @@ import org.bouncycastle.operator.jcajce.JcaDigestCalculatorProviderBuilder;
 import org.bouncycastle.util.encoders.Hex;
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
-
 
 import lombok.extern.log4j.Log4j2;
 
@@ -60,7 +60,7 @@ public class DesafioApplication {
 				// calculate hash of doc.txt
 				hashDoc(docToHash);
 				// sign doc with the given certificate
-				signDoc(docStream, signatures, password, true);
+				signDoc(docStream, signatures, password, "desafioSigned", "f22c0321-1a9a-4877-9295-73092bb9aa94");
 				// verify signature
 				try (final var signedDoc = FileUtils.openInputStream(FileUtils.getFile("output/desafioSigned.p7s"))) {
 					verifyDoc(signedDoc);
@@ -72,8 +72,6 @@ public class DesafioApplication {
 			}
 		}
 	}
-
-
 
 	public static boolean verifyDoc(InputStream doc) throws OperatorCreationException, CMSException, IOException {
 		// parse file
@@ -96,6 +94,9 @@ public class DesafioApplication {
 					final var jcaSignerVerifier = new JcaSimpleSignerInfoVerifierBuilder().setProvider("BC")
 							.build(certificate);
 					return signer.verify(jcaSignerVerifier);
+				} catch (CMSVerifierCertificateNotValidException e) {
+					log.info("Certificate expired!");
+					return false;
 				} catch (OperatorCreationException | CertificateException | CMSException e) {
 					return false;
 				}
@@ -111,7 +112,8 @@ public class DesafioApplication {
 		Security.addProvider(bcProvider);
 	}
 
-	public static String signDoc(InputStream toSign, InputStream signers, char[] password, boolean saveFile)
+	public static String signDoc(InputStream toSign, InputStream signers, char[] password, String outputFileName,
+			String alias)
 			throws KeyStoreException, NoSuchAlgorithmException, CertificateException,
 			IOException, UnrecoverableKeyException, OperatorCreationException, CertificateEncodingException,
 			CMSException {
@@ -124,8 +126,8 @@ public class DesafioApplication {
 		// extract private key
 		// TODO: This method will only look for and sign with the given alias, fix this
 		// by using the known aliases ks.aliases()
-		final var privKey = (PrivateKey) ks.getKey("f22c0321-1a9a-4877-9295-73092bb9aa94", password);
-		final var certificate = ks.getCertificate("f22c0321-1a9a-4877-9295-73092bb9aa94");
+		final var privKey = (PrivateKey) ks.getKey(alias, password);
+		final var certificate = ks.getCertificate(alias);
 
 		CMSProcessableByteArray cmsData;
 
@@ -145,8 +147,9 @@ public class DesafioApplication {
 		final var signedMessage = gen.generate(cmsData, true).getEncoded();
 
 		// save as .p7s
-		if (saveFile)
-			try (final var outputStream = FileUtils.openOutputStream(FileUtils.getFile("output/desafioSigned.p7s"))) {
+		if (outputFileName != "")
+			try (final var outputStream = FileUtils
+					.openOutputStream(FileUtils.getFile("output/" + outputFileName + ".p7s"))) {
 				IOUtils.write(signedMessage, outputStream);
 			}
 

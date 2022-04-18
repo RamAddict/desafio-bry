@@ -18,14 +18,15 @@ import org.springframework.web.multipart.MultipartFile;
 
 @RestController
 public class RootController {
-    @RequestMapping(path = "/signature", method = RequestMethod.POST, consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
+	@RequestMapping(path = "/signature", method = RequestMethod.POST, consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
 	public String requestDocSignature(@RequestParam("toSign") MultipartFile toSign,
 			@RequestParam("pkcsFile") MultipartFile pkcsFile,
 			@RequestParam("password") String password)
 			throws UnrecoverableKeyException, CertificateEncodingException, KeyStoreException, NoSuchAlgorithmException,
 			CertificateException, OperatorCreationException, IOException, CMSException {
 
-		return DesafioApplication.signDoc(toSign.getInputStream(), pkcsFile.getInputStream(), password.toCharArray(), false);
+		return DesafioApplication.signDoc(toSign.getInputStream(), pkcsFile.getInputStream(), password.toCharArray(),
+				"", "f22c0321-1a9a-4877-9295-73092bb9aa94");
 	}
 
 	@RequestMapping(path = "/verify", method = RequestMethod.POST, consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
