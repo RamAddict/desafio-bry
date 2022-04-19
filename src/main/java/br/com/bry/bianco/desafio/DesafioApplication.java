@@ -12,6 +12,7 @@ import java.security.NoSuchProviderException;
 import java.security.PrivateKey;
 import java.security.Security;
 import java.security.UnrecoverableKeyException;
+import java.security.cert.Certificate;
 import java.security.cert.CertificateEncodingException;
 import java.security.cert.CertificateException;
 import java.security.cert.X509Certificate;
@@ -26,12 +27,14 @@ import org.bouncycastle.cms.CMSProcessableByteArray;
 import org.bouncycastle.cms.CMSSignedDataGenerator;
 import org.bouncycastle.cms.CMSSignedDataParser;
 import org.bouncycastle.cms.CMSVerifierCertificateNotValidException;
+import org.bouncycastle.cms.SignerInformationStore;
 import org.bouncycastle.cms.jcajce.JcaSignerInfoGeneratorBuilder;
 import org.bouncycastle.cms.jcajce.JcaSimpleSignerInfoVerifierBuilder;
 import org.bouncycastle.jce.provider.BouncyCastleProvider;
 import org.bouncycastle.operator.OperatorCreationException;
 import org.bouncycastle.operator.jcajce.JcaContentSignerBuilder;
 import org.bouncycastle.operator.jcajce.JcaDigestCalculatorProviderBuilder;
+import org.bouncycastle.util.Store;
 import org.bouncycastle.util.encoders.Hex;
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
@@ -73,21 +76,31 @@ public class DesafioApplication {
 		}
 	}
 
-	public static boolean verifyDoc(InputStream doc) throws OperatorCreationException, CMSException, IOException {
+	public static boolean verifyDoc(InputStream doc) throws OperatorCreationException, IOException, CMSException {
 		// parse file
-		final var signedParser = new CMSSignedDataParser(
-				new JcaDigestCalculatorProviderBuilder().setProvider("BC").build(), doc);
-
-		// consume input stream, to allow for hash calculation
-		signedParser.getSignedContent().drain();
-		// get signers
-		final var signers = signedParser.getSignerInfos();
-		// and certificates
-		final var certificates = signedParser.getCertificates();
+		CMSSignedDataParser signedParser = null;
+		SignerInformationStore signers = null;
+		@SuppressWarnings("rawtypes")
+		Store certificates = null;
+		try {
+			signedParser = new CMSSignedDataParser(
+					new JcaDigestCalculatorProviderBuilder().setProvider("BC").build(), doc);
+			// consume input stream, to allow for hash calculation
+			signedParser.getSignedContent().drain();
+			// get signers
+			signers = signedParser.getSignerInfos();
+			// and certificates
+			certificates = signedParser.getCertificates();
+		} catch (CMSException e1) {
+			log.error(e1);
+			throw new CMSException("Arquivo parâmetro inválido", e1);
+		}
+		final var certificatesFinal = certificates;
+		
 		// verify
 		final var isValid = signers.getSigners().stream().allMatch((signer) -> {
-			@SuppressWarnings("unchecked")
-			final var possibleCertificate = certificates.getMatches(signer.getSID()).stream().findFirst();
+		@SuppressWarnings("unchecked")
+		final var possibleCertificate = certificatesFinal.getMatches(signer.getSID()).stream().findFirst();
 			if (possibleCertificate.isPresent()) {
 				final var certificate = (X509CertificateHolder) possibleCertificate.get();
 				try {
@@ -95,9 +108,10 @@ public class DesafioApplication {
 							.build(certificate);
 					return signer.verify(jcaSignerVerifier);
 				} catch (CMSVerifierCertificateNotValidException e) {
-					log.info("Certificate expired!");
+					log.error("Certificate invalid!");
 					return false;
 				} catch (OperatorCreationException | CertificateException | CMSException e) {
+					log.error(e);
 					return false;
 				}
 			} else {
@@ -114,20 +128,37 @@ public class DesafioApplication {
 
 	public static String signDoc(InputStream toSign, InputStream signers, char[] password, String outputFileName,
 			String alias)
-			throws KeyStoreException, NoSuchAlgorithmException, CertificateException,
+			throws NoSuchAlgorithmException, CertificateException,
 			IOException, UnrecoverableKeyException, OperatorCreationException, CertificateEncodingException,
-			CMSException {
+			CMSException, KeyStoreException {
 		// get appropriate KeyStore instance
 		final var ks = KeyStore.getInstance("PKCS12");
 
 		// add digital signature to keystore
-		ks.load(signers, password);
+		try {
+			ks.load(signers, password);
+		} catch (IOException e) {
+			log.error(e);
+			throw new IOException("Senha incorreta ou arquivo mal formado", e);
+		}
 
 		// extract private key
 		// TODO: This method will only look for and sign with the given alias, fix this
-		// by using the known aliases ks.aliases()
-		final var privKey = (PrivateKey) ks.getKey(alias, password);
-		final var certificate = ks.getCertificate(alias);
+		// by using the known aliases ks.aliases(), however, this is beyond scope
+		PrivateKey privKey;
+		try {
+			privKey = (PrivateKey) ks.getKey(alias, password);
+		} catch (KeyStoreException e) {
+			log.error(e);
+			throw new KeyStoreException("Não foi possível encontrar a chave com o par de alias e senha recebido", e);
+		}
+		Certificate certificate;
+		try {
+			certificate = ks.getCertificate(alias);
+		} catch (KeyStoreException e) {
+			log.error(e);
+			throw new KeyStoreException("Não foi possível encontrar o certificado com o alias recebido", e);
+		}
 
 		CMSProcessableByteArray cmsData;
 
@@ -142,15 +173,31 @@ public class DesafioApplication {
 		gen.addSignerInfoGenerator(new JcaSignerInfoGeneratorBuilder(
 				new JcaDigestCalculatorProviderBuilder().setProvider("BC").build())
 				.build(sha256Signer, (X509Certificate) certificate));
-		gen.addCertificate(new X509CertificateHolder(certificate.getEncoded()));
+		try {
+			gen.addCertificate(new X509CertificateHolder(certificate.getEncoded()));
+		} catch (CMSException e) {
+			log.error(e);
+			throw new CMSException("Erro ao realizar o encoding do arquivo", e);
+		} catch (IOException e) {
+			log.error(e);
+			throw new IOException("Dados corrompidos ou estrutura inválido", e);
+		}
 		// sign doc
-		final var signedMessage = gen.generate(cmsData, true).getEncoded();
-
+		byte[] signedMessage;
+		try {
+			signedMessage = gen.generate(cmsData, true).getEncoded();
+		} catch (CMSException e) {
+			log.error(e);
+			throw new CMSException("Erro ao assinar o documento", e);
+		}
 		// save as .p7s
 		if (outputFileName != "")
 			try (final var outputStream = FileUtils
 					.openOutputStream(FileUtils.getFile("output/" + outputFileName + ".p7s"))) {
 				IOUtils.write(signedMessage, outputStream);
+			} catch (IOException e) {
+				log.error(e);
+				throw new IOException("Erro ao escrever arquivo em sistema", e);
 			}
 
 		return Base64.getEncoder().encodeToString(signedMessage);
