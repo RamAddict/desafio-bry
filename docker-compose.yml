@@ -3,7 +3,9 @@ services:
   restAPI:
     image: maven:3.8-openjdk-17
     volumes:
-      - '.:/tmp'
+      - './src:/tmp/src'
+      - './pom.xml:/tmp/pom.xml'
+      - './output/:/tmp/output/'
     working_dir: '/tmp'
     command: 'mvn spring-boot:run'
     ports:
@@ -11,6 +13,8 @@ services:
   testAPI:
     image: maven:3.8-openjdk-17
     volumes:
-      - '.:/tmp'
+      - './src:/tmp/src'
+      - './pom.xml:/tmp/pom.xml'
+      - './output/:/tmp/output/'
     working_dir: '/tmp'
     command: 'mvn test'
